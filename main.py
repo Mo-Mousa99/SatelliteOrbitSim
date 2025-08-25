@@ -9,13 +9,19 @@ SCREEN_TITLE = "Satellite Orbit Simulator"
 #Earth(Constant)
 EARTH_RADIUS = 100
 EARTH_MASS = 5.972e24 #Will be used later
-GRAVITY_CONSTANT = 1.0
+MU = 400.0
+IMPACT_EPS = 0.5
 #Satellite(Constant)
 SATELLITE_RADIUS = 5
 INITIAL_DISTANCE = 200 #From Earth center
+TIME_SCALE = 1.0
+START_ALT = 2.0
 #Atmospheric Factors
-BASE_AIR_DENSITY = 1.2 #At Earth Surface
-SCALE_HEIGHT = 10 # How fast Atmosphere thins
+BASE_AIR_DENSITY = 1.0 #At Earth Surface
+SCALE_HEIGHT = 30 # How fast Atmosphere thins
+
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
 
 #Orbit View
 class OrbitView(arcade.View):
@@ -32,7 +38,7 @@ class OrbitView(arcade.View):
         self.earth_y = SCREEN_HEIGHT // 2
 
         #Satellite State
-        self.satellite_x = self.earth_x + EARTH_RADIUS
+        self.satellite_x = self.earth_x + EARTH_RADIUS + START_ALT
         self.satellite_y = self.earth_y
 
         #Initial Velocity
@@ -59,8 +65,39 @@ class OrbitView(arcade.View):
         self.altitude_text = arcade.Text("", 10, SCREEN_HEIGHT - 40, color= arcade.color.WHITE, font_size= 14)
         self.orbit_count_text = arcade.Text("", 10, SCREEN_HEIGHT - 60, color= arcade.color.WHITE, font_size= 14)
 
+        # --- Time scale ---
+        self.time_scale = TIME_SCALE  # start from global default
+        self.min_time_scale = 0.1
+        self.max_time_scale = 20.0
+
+        # --- Small UI overlay for time scale ---
+        self.ui = arcade.gui.UIManager()
+        self.vbox = arcade.gui.UIBoxLayout(space_between=6)
+
+        self.time_label = arcade.gui.UILabel(text=f"Time x{self.time_scale:.1f}", text_color=arcade.color.WHITE, font_size=12)
+        self.btn_slower = arcade.gui.UIFlatButton(text="–", width=30)
+        self.btn_faster = arcade.gui.UIFlatButton(text="+", width=30)
+        row = arcade.gui.UIBoxLayout(vertical=False, space_between=6)
+        row.add(self.btn_slower)
+        row.add(self.btn_faster)
+
+        self.vbox.add(self.time_label)
+        self.vbox.add(row)
+
+        # hook up events
+        self.btn_slower.on_click = self._on_slow
+        self.btn_faster.on_click = self._on_fast
+
+        # Anchor top-left
+        self.anchor = arcade.gui.UIAnchorWidget(anchor_x="left", anchor_y="top", align_x=12, align_y=-12, child=self.vbox)
+        self.ui.add(self.anchor)
+
     def on_show(self):
         arcade.set_background_color(arcade.color.BLACK)
+        self.ui.enable()
+    
+    def on_hide_view(self):
+        self.ui.disable()
 
     def on_draw(self):
         self.clear()
@@ -93,120 +130,120 @@ class OrbitView(arcade.View):
             self.altitude_text.draw()
             self.orbit_count_text.draw()
 
+        self.ui.draw()
+
     def on_update(self, delta_time):
-        if not self.launched:
+        if not self.launched or self.impact_detected:
             return
         
-        if self.impact_detected:
-            return 
-        
-        self.sim_time += delta_time
+        dt = delta_time * self.time_scale
+        self.sim_time += dt
 
-
-        #Vector from Satellite to Earth center
+        # Vector to Earth center
         dx = self.earth_x - self.satellite_x
         dy = self.earth_y - self.satellite_y
-        distance = math.sqrt(dx**2 + dy**2)
-
-         #Gravitational Force (simplified)
-        force = GRAVITY_CONSTANT / (distance ** 2)
-        angle = math.atan2(dy, dx)
-        ax = force * math.cos(angle)
-        ay = force * math.sin(angle)
-
-        if distance < EARTH_RADIUS:
-            print("Impact Detected")
-            self.launched = False
-            self.impact_detected = True
-            self.impact_time = self.sim_time
-            return
+        r  = math.hypot(dx, dy)
         
+        # Impact check
+        if r <= (EARTH_RADIUS + 0.0) - IMPACT_EPS:
+         print("Impact Detected!")
+         self.launched = False
+         self.impact_detected = True
+         self.impact_time = self.sim_time
+         return
+        
+        # --- Gravity 
+        ax =  MU * dx / (r**3)
+        ay =  MU * dy / (r**3)
+        
+        # altitude from surface:
+        h = r - EARTH_RADIUS
+        rho = BASE_AIR_DENSITY * math.exp(-max(h, 0.0) / SCALE_HEIGHT)
+        
+        v = math.hypot(self.vx, self.vy)
+        if v > 0:
+            # Acceleration magnitude due to drag
+            # Scale by 1/mass so heavy satellites are less affected
+            drag_acc = (self.drag_coefficient / max(self.satellite_mass, 1e-8)) * rho * (v * v)
+            ax += -drag_acc * (self.vx / v)
+            ay += -drag_acc * (self.vy / v)
+        
+        # --- Integrate (symplectic/semi-implicit Euler)
+        self.vx += ax * dt
+        self.vy += ay * dt
+
+        self.satellite_x += self.vx * dt
+        self.satellite_y += self.vy * dt
+
+        # --- Orbit counting
+        angle = math.atan2(self.earth_y - self.satellite_y, self.earth_x - self.satellite_x)
         if self.previous_angle is not None:
-            delta_angle = angle - self.previous_angle
-
-            if delta_angle > math.pi:
-                delta_angle -= 2 * math.pi
-            elif delta_angle < -math.pi:
-                delta_angle += 2 * math.pi
-
-            self.total_angle_travelled += abs(delta_angle)
-
-
+            dtheta = angle - self.previous_angle
+            if dtheta > math.pi: dtheta -= 2 * math.pi
+            elif dtheta < -math.pi: dtheta += 2 * math.pi
+            self.total_angle_travelled += abs(dtheta)
             if self.total_angle_travelled >= 2 * math.pi:
                 self.orbit_count += 1
-                self.total_angle_travelled = 0
+                self.total_angle_travelled = 0.0
 
         self.previous_angle = angle
 
-        # Current velocity magnitude
-        v = math.sqrt(self.vx**2 + self.vy**2)
-        if v != 0:
-            drag_magnitude = self.drag_coefficient * v**2
-            drag_ax = -drag_magnitude * (self.vx / v)
-            drag_ay = -drag_magnitude * (self.vy / v)
-            # Add drag to acceleration
-            ax += drag_ax
-            ay += drag_ay
-
-        #Update velocity
-        self.vx += ax * delta_time * 20000
-        self.vy += ay * delta_time * 20000
-        
-
-        #Update Position
-        self.satellite_x += self.vx
-        self.satellite_y += self.vy
-
-        # --- Atmospheric drag ---
-
-        # Estimate altitude from Earth center
-        altitude = distance - EARTH_RADIUS
-    
-        # Air density drops exponentially with altitude
-       # air_density = BASE_AIR_DENSITY * math.exp(-altitude / SCALE_HEIGHT)
-
-        #Current position to trail
+        # --- Trail & HUD
         self.trail.append((self.satellite_x, self.satellite_y))
-
-        #Keep trial from gettting too long
         if len(self.trail) > self.max_trail_length:
-            self.trail.pop(0)
+         self.trail.pop(0)
 
-        self.speed = v
-        self.altitude = distance - EARTH_RADIUS
-
-        self.speed_text.text = f"Speed: {self.speed:.2f}"
-        self.altitude_text.text = f"Altitude: {self.altitude:.2f}"
+        self.speed = v  # px/s
+        self.altitude = h
+        self.speed_text.text = f"Speed: {self.speed:.2f} px/s"
+        self.altitude_text.text = f"Altitude: {self.altitude:.2f} px"
         self.orbit_count_text.text = f"Orbits: {self.orbit_count}"
+
+    def _on_slow(self, *_):
+        self.time_scale = clamp(round(self.time_scale/ 1.25, 2), self.min_time_scale, self.max_time_scale)
+        self.time_label.text = f"Time x{self.time_scale:.1f}"
+
+    def _on_fast(self, *_):
+        self.time_scale = clamp(round(self.time_scale* 1.25, 2), self.min_time_scale, self.max_time_scale)
+        self.time_label.text = f"Time x{self.time_scale:.1f}"
 
         
     def on_key_press(self, symbol, modifiers):
         if symbol == arcade.key.SPACE:
-            if self.launched:
+            if self.launched or self.impact_detected:
                 return
             self.launched = True
+        elif symbol == 91:
+            self._on_slow()
+        elif symbol == 93:
+            self._on_fast()
+        elif symbol == arcade.key.BACKSLASH:
+            self.time_scale = TIME_SCALE
+            self.time_label.text = f"Time x{self.time_scale:.1f}"
 
-        # Vector from Earth to satellite
+            # Vector from Earth to satellite
         dx = self.satellite_x - self.earth_x
         dy = self.satellite_y - self.earth_y
-        distance = math.sqrt(dx**2 + dy**2)
+        r = math.hypot(dx, dy)
 
-        if distance == 0:
+        if r == 0:
             print("Satellite is at Earth's center! Cannot launch.")
             self.launched = False
             return
 
-        # Normalize to get radial direction
-        nx = dx / distance
-        ny = dy / distance
+        # Radial and tangential unit vectors
+        nx, ny = dx / r, dy / r
+        tx, ty = -ny, nx
 
-        # Rotate 90 degrees to get tangential direction
-        tx = -ny
-        ty = nx
+        # User angle: 0 = tangent, 90+ = radial outward
+        theta = math.radians(self.launch_angle)
+        dir_x = math.cos(theta) * tx + math.sin(theta) * nx
+        dir_y = math.cos(theta) * ty + math.sin(theta) * ny
 
         # Apply tangential initial velocity
-        self.vx = self.initial_speed * tx
-        self.vy = self.initial_speed * ty
+        self.vx = self.initial_speed * dir_x
+        self.vy = self.initial_speed * dir_y
+
         
 #Mission Control
 class MissionControlView(arcade.View):
@@ -217,9 +254,9 @@ class MissionControlView(arcade.View):
         self.v_box = arcade.gui.UIBoxLayout()
 
         #Input Widgets
-        self.speed_input = arcade.gui.UIInputText(width=200)
-        self.mass_input = arcade.gui.UIInputText(width=200)
-        self.drag_input = arcade.gui.UIInputText(width=200)
+        self.speed_input = arcade.gui.UIInputText(width=200, text="1.98")
+        self.mass_input = arcade.gui.UIInputText(width=200, text="100")
+        self.drag_input = arcade.gui.UIInputText(width=200, text="0.0000")
         self.angle_input = arcade.gui.UIInputText(width=220, text="0")
 
         # Layout widgets
