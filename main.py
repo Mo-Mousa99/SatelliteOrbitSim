@@ -10,7 +10,7 @@ SCREEN_TITLE = "Satellite Orbit Simulator"
 EARTH_RADIUS = 100
 EARTH_MASS = 5.972e24 #Will be used later
 MU = 400.0
-IMPACT_EPS = 0.5
+IMPACT_EPS = 0.2
 #Satellite(Constant)
 SATELLITE_RADIUS = 5
 INITIAL_DISTANCE = 200 #From Earth center
@@ -19,14 +19,39 @@ START_ALT = 2.0
 #Atmospheric Factors
 BASE_AIR_DENSITY = 1.0 #At Earth Surface
 SCALE_HEIGHT = 30 # How fast Atmosphere thins
+#Starfield
+NUM_STARS = 120
 
 def clamp(v, lo, hi):
     return max(lo, min(hi, v))
+
+# Graph Helper
+def _draw_mini_graph(x, y, w, h, data, ymin, ymax, color=arcade.color.LIGHT_GRAY, title=""):
+    #Frame
+    arcade.draw_rectangle_outline(x + w/2, y + h/2, w, h, arcade.color.DIM_GRAY, 1)
+    if title:
+        arcade.draw_text(title, x + 4, y + h - 14, arcade.color.WHITE, 12)
+        if not data or len(data) < 2:
+            return
+        step_x = w / max(1, len(data) - 1)
+        def norm (v):
+            return 0 if ymax == ymin else (v - ymin) / (ymax - ymin)
+        pts = []
+        for i, v in enumerate(data):
+            px = x + i * step_x
+            py = y + norm(v) * h
+            pts.append((px, py))
+        arcade.draw_line_strip(pts, color, 1)
 
 #Orbit View
 class OrbitView(arcade.View):
     def __init__(self, initial_speed, launch_angle, satellite_mass, drag_coefficient):
         super().__init__()
+
+
+        #Impact Coordinates
+        self.impact_coords = None
+        self.impact_bearing_deg = None
 
         #User-defined values from Mission Control
         self.initial_speed = initial_speed
@@ -41,6 +66,12 @@ class OrbitView(arcade.View):
         self.satellite_x = self.earth_x + EARTH_RADIUS + START_ALT
         self.satellite_y = self.earth_y
 
+        # Circular orbit speed
+        r0 = math.hypot(self.satellite_x - self.earth_x, self.satellite_y - self.earth_y)
+        self.v_circ = math.sqrt(MU / r0)
+        self.v_circ_text = arcade.Text (f"v_circ @ launch: {self.v_circ:.2f} px/s",
+                                        10, SCREEN_HEIGHT - 80, arcade.color.WHITE, 12)
+
         #Initial Velocity
         self.vx = 0
         self.vy = 0
@@ -48,11 +79,13 @@ class OrbitView(arcade.View):
 
         #Trail Buffer
         self.trail = []
-        self.max_trail_length = 500
+        self.max_trail_length = 350
         
         #Impact and Simulation Time
         self.impact_detected = False
         self.impact_time = None
+        self.impact_coords = None
+        self.impact_bearing_deg = None
         self.sim_time = 0 #This tracks total simulation time
 
         #Orbit Track
@@ -60,10 +93,28 @@ class OrbitView(arcade.View):
         self.previous_angle = None
         self.orbit_count = 0
 
+        #Informative Graph
+        self.history_t = []
+        self.history_alt = []
+        self.history_speed = []
+        self.max_hist = 400
+
         #Hud State
         self.speed_text = arcade.Text("", 10, SCREEN_HEIGHT - 20, color= arcade.color.WHITE, font_size= 14)
         self.altitude_text = arcade.Text("", 10, SCREEN_HEIGHT - 40, color= arcade.color.WHITE, font_size= 14)
         self.orbit_count_text = arcade.Text("", 10, SCREEN_HEIGHT - 60, color= arcade.color.WHITE, font_size= 14)
+
+        # --- Starfield ---
+        import random
+        self.stars = []
+        for _ in range(NUM_STARS):
+            self.stars.append({
+                "x": random.randint(0, SCREEN_WIDTH),
+                "y": random.randint(0, SCREEN_HEIGHT),
+                "phase": random.random() * 6.283,
+                "rate": 0.5 + random.random() * 2.0
+            })
+        self._twinkle_t = 0.0
 
         # --- Time scale ---
         self.time_scale = TIME_SCALE  # start from global default
@@ -89,7 +140,7 @@ class OrbitView(arcade.View):
         self.btn_faster.on_click = self._on_fast
 
         # Anchor top-left
-        self.anchor = arcade.gui.UIAnchorWidget(anchor_x="left", anchor_y="top", align_x=12, align_y=-12, child=self.vbox)
+        self.anchor = arcade.gui.UIAnchorWidget(anchor_x="left", anchor_y="top", align_x=12, align_y=-92, child=self.vbox)
         self.ui.add(self.anchor)
 
     def on_show(self):
@@ -101,6 +152,11 @@ class OrbitView(arcade.View):
 
     def on_draw(self):
         self.clear()
+
+        #Flickering Stars
+        for s in self.stars:
+            a = 192 + int(63 * math.sin(self._twinkle_t * s["rate"] + s["phase"]))
+            arcade.draw_point(s["x"], s["y"], (200, 200, 255, a), 2)
         #Placeholder Earth
         arcade.draw_circle_filled(self.earth_x, self.earth_y, EARTH_RADIUS, arcade.color.DARK_GREEN)
         
@@ -111,9 +167,19 @@ class OrbitView(arcade.View):
             arcade.draw_circle_filled(tx, ty, 2, (150, 150, 255, alpha))
 
         if self.impact_detected:
+            if self.impact_coords is not None:
+             ix, iy = self.impact_coords
+             arcade.draw_text(
+                 f"impact @ ({ix:.1f}, {iy:.1f}) bearing {self.impact_bearing_deg:.1f}°",
+                 10, 70, arcade.color.WHITE, 14
+             )
             arcade.draw_circle_filled(self.satellite_x, self.satellite_y, 10, arcade.color.RED_DEVIL)
             arcade.draw_text(f"Impact Time: {self.impact_time:.2f} sec",
                               10, 10, arcade.color.WHITE, 14)
+            arcade.draw_text(f"Orbits completed: {self.orbit_count}",
+                             10, 30, arcade.color.WHITE, 14)
+            arcade.draw_text("Press R to return to Mission Control",
+                             10, 50, arcade.color.LIGHT_GRAY, 14)
 
         #Placeholder Satellite
         arcade.draw_circle_filled(self.satellite_x, self.satellite_y, SATELLITE_RADIUS, arcade.color.LIGHT_GRAY)
@@ -129,6 +195,22 @@ class OrbitView(arcade.View):
             self.speed_text.draw()
             self.altitude_text.draw()
             self.orbit_count_text.draw()
+            self.v_circ_text.draw()
+
+        # --- Mini Graph ---
+        plot_w, plot_h = 220, 80
+        pad = 10
+        px = SCREEN_WIDTH - plot_w - pad
+        py1 = pad + plot_h + 20
+        py0 = pad
+
+        alt_max = max(150.0, (EARTH_RADIUS * 0.75) + 80.0)
+        spd_max = max(3.0, 1.2 * self.v_circ)
+
+        _draw_mini_graph(px, py1, plot_w, plot_h, self.history_alt, 0.0, alt_max,
+                         arcade.color.LIGHT_GREEN, "Altitude")
+        _draw_mini_graph(px, py0, plot_w, plot_h, self.history_speed, 0.0, spd_max,
+                         arcade.color.ORANGE, "Speed")
 
         self.ui.draw()
 
@@ -139,6 +221,9 @@ class OrbitView(arcade.View):
         dt = delta_time * self.time_scale
         self.sim_time += dt
 
+        # Starfield time
+        self._twinkle_t += dt
+
         # Vector to Earth center
         dx = self.earth_x - self.satellite_x
         dy = self.earth_y - self.satellite_y
@@ -146,13 +231,18 @@ class OrbitView(arcade.View):
         
         # Impact check
         if r <= (EARTH_RADIUS + 0.0) - IMPACT_EPS:
-         print("Impact Detected!")
          self.launched = False
          self.impact_detected = True
          self.impact_time = self.sim_time
+         ix = self.satellite_x - self.earth_x
+         iy = self.satellite_y - self.earth_y
+         self.impact_coords = (ix, iy)
+         self.impact_bearing_deg = (math.degrees(math.atan2(iy, ix)) + 360.0) % 360.0
+         print(f"Impact Detected after {self.orbit_count} orbits(s) at"
+                                          f"({ix:.1f}, {iy:.1f}), bearing (self.impact_bearing_deg:.1f)°")
          return
         
-        # --- Gravity 
+        # --- Gravity --- 
         ax =  MU * dx / (r**3)
         ay =  MU * dy / (r**3)
         
@@ -168,14 +258,14 @@ class OrbitView(arcade.View):
             ax += -drag_acc * (self.vx / v)
             ay += -drag_acc * (self.vy / v)
         
-        # --- Integrate (symplectic/semi-implicit Euler)
+        # --- Integrate (symplectic/semi-implicit Euler) ---
         self.vx += ax * dt
         self.vy += ay * dt
 
         self.satellite_x += self.vx * dt
         self.satellite_y += self.vy * dt
 
-        # --- Orbit counting
+        # --- Orbit counting ---
         angle = math.atan2(self.earth_y - self.satellite_y, self.earth_x - self.satellite_x)
         if self.previous_angle is not None:
             dtheta = angle - self.previous_angle
@@ -188,7 +278,16 @@ class OrbitView(arcade.View):
 
         self.previous_angle = angle
 
-        # --- Trail & HUD
+        # --- Graph History ---
+        self.history_t.append(self.sim_time)
+        self.history_alt.append(h)
+        self.history_speed.append(v)
+        if len(self.history_t) > self.max_hist:
+            self.history_t.pop(0)
+            self.history_alt.pop(0)
+            self.history_speed.pop(0)
+
+        # --- Trail & HUD ---
         self.trail.append((self.satellite_x, self.satellite_y))
         if len(self.trail) > self.max_trail_length:
          self.trail.pop(0)
@@ -209,6 +308,13 @@ class OrbitView(arcade.View):
 
         
     def on_key_press(self, symbol, modifiers):
+        if symbol == arcade.key.R:
+            try:
+                self.ui.disable()
+            except Exception:
+                pass
+            self.window.show_view(MissionControlView())
+            return
         if symbol == arcade.key.SPACE:
             if self.launched or self.impact_detected:
                 return
