@@ -35,7 +35,9 @@ def _draw_mini_graph(x, y, w, h, data, ymin, ymax, color=arcade.color.LIGHT_GRAY
             return
         step_x = w / max(1, len(data) - 1)
         def norm (v):
-            return 0 if ymax == ymin else (v - ymin) / (ymax - ymin)
+            if ymax == ymin:
+                return 0.0
+            return max(0.0, min(1.0, (v - ymin) / (ymax - ymin)))
         pts = []
         for i, v in enumerate(data):
             px = x + i * step_x
@@ -319,36 +321,38 @@ class OrbitView(arcade.View):
             if self.launched or self.impact_detected:
                 return
             self.launched = True
-        elif symbol == 91:
+
+        # Vector from Earth to satellite
+            dx = self.satellite_x - self.earth_x
+            dy = self.satellite_y - self.earth_y
+            r = math.hypot(dx, dy)
+
+            if r == 0:
+                print("Satellite is at Earth's center! Cannot launch.")
+                self.launched = False
+                return
+
+            # Radial and tangential unit vectors
+            nx, ny = dx / r, dy / r
+            tx, ty = -ny, nx
+
+            # User angle: 0 = tangent, 90+ = radial outward
+            theta = math.radians(self.launch_angle)
+            dir_x = math.cos(theta) * tx + math.sin(theta) * nx
+            dir_y = math.cos(theta) * ty + math.sin(theta) * ny
+
+            # Apply tangential initial velocity
+            self.vx = self.initial_speed * dir_x
+            self.vy = self.initial_speed * dir_y
+            return
+
+        if symbol == 91:
             self._on_slow()
         elif symbol == 93:
             self._on_fast()
         elif symbol == arcade.key.BACKSLASH:
             self.time_scale = TIME_SCALE
             self.time_label.text = f"Time x{self.time_scale:.1f}"
-
-            # Vector from Earth to satellite
-        dx = self.satellite_x - self.earth_x
-        dy = self.satellite_y - self.earth_y
-        r = math.hypot(dx, dy)
-
-        if r == 0:
-            print("Satellite is at Earth's center! Cannot launch.")
-            self.launched = False
-            return
-
-        # Radial and tangential unit vectors
-        nx, ny = dx / r, dy / r
-        tx, ty = -ny, nx
-
-        # User angle: 0 = tangent, 90+ = radial outward
-        theta = math.radians(self.launch_angle)
-        dir_x = math.cos(theta) * tx + math.sin(theta) * nx
-        dir_y = math.cos(theta) * ty + math.sin(theta) * ny
-
-        # Apply tangential initial velocity
-        self.vx = self.initial_speed * dir_x
-        self.vy = self.initial_speed * dir_y
 
         
 #Mission Control
