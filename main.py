@@ -2,6 +2,12 @@ import math
 import random
 import arcade
 import arcade.gui
+import os
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def asset(path: str):
+    return os.path.join(BASE_DIR, path)
 
 # ---------- Constants ----------
 SCREEN_WIDTH = 800
@@ -29,7 +35,7 @@ SCALE_HEIGHT = 25.0        # px
 NUM_STARS = 120
 
 # Font
-FONT_PATH = "assets/fonts/PressStart2P-Regular.ttf"
+FONT_PATH = asset("assets/fonts/PressStart2P-Regular.ttf")
 FONT_NAME = "Press Start 2P"
 arcade.load_font(FONT_PATH)
 
@@ -77,7 +83,7 @@ class OrbitView(arcade.View):
         super().__init__()
 
 
-        sheet_path = "assets/earth/earth_rot_4x3.png"
+        sheet_path = asset("assets/earth/earth_rot_4x3.png")
         CELL_W, CELL_H = 69, 69
         COLS, ROWS = 4, 3
         self.earth_frames = load_grid_textures(sheet_path, CELL_W, CELL_H, COLS, ROWS)
@@ -88,7 +94,7 @@ class OrbitView(arcade.View):
         self._earth_frame_idx = 0
 
         self.portrait_frames = load_grid_textures(
-            "assets/portraits/pilot.png",
+            asset("assets/portraits/pilot.png"),
             128, 128,
             4, 1)
         self.current_portrait_idx = 0
@@ -98,8 +104,8 @@ class OrbitView(arcade.View):
         self.world_cam = arcade.Camera(SCREEN_WIDTH, SCREEN_HEIGHT)
         self.ui_cam = arcade.Camera(SCREEN_WIDTH, SCREEN_HEIGHT)
 
-        self.map_tex = arcade.load_texture("assets/maps/pixel_art_map.png")
-        self.pin_tex = arcade.load_texture("assets/maps/pixel_art_pin.png")
+        self.map_tex = arcade.load_texture(asset("assets/maps/pixel_art_map.png"))
+        self.pin_tex = arcade.load_texture(asset("assets/maps/pixel_art_pin.png"))
 
         # Mission Control parameters
         self.initial_speed = initial_speed
@@ -185,8 +191,8 @@ class OrbitView(arcade.View):
             font_name=FONT_NAME
         )
 
-        self.tex_minus = arcade.load_texture("assets/ui/MINUS.png")
-        self.tex_plus = arcade.load_texture("assets/ui/PLUS.png")
+        self.tex_minus = arcade.load_texture(asset("assets/ui/MINUS.png"))
+        self.tex_plus = arcade.load_texture(asset("assets/ui/PLUS.png"))
 
         row = arcade.gui.UIBoxLayout(vertical=False, space_between=6)
         self.btn_slower = arcade.gui.UITextureButton(
@@ -210,9 +216,9 @@ class OrbitView(arcade.View):
 
         # --- Control Bar ---
         self.icon_tex = {
-            "map": arcade.load_texture("assets/ui/M.png"),
-            "orbit": arcade.load_texture("assets/ui/O.png"),
-            "reset": arcade.load_texture("assets/ui/R.png"),
+            "map": arcade.load_texture(asset("assets/ui/M.png")),
+            "orbit": arcade.load_texture(asset("assets/ui/O.png")),
+            "reset": arcade.load_texture(asset("assets/ui/R.png")),
         }
 
         self.icon_size = 28
@@ -540,9 +546,9 @@ class MissionControlView(arcade.View):
         super().__init__()
 
         # Background PNG
-        self.bg_tex = arcade.load_texture("assets/ui/mission_control.png")
-
-        self.cat_frames = load_grid_textures("assets/ui/Sleepy_Pilot.png", 64, 64, 2, 1)
+        self.bg_tex = arcade.load_texture(asset("assets/ui/mission_control.png"))
+        # Power napping Pilot
+        self.cat_frames = load_grid_textures(asset("assets/ui/Sleepy_Pilot.png"), 64, 64, 2, 1)
         self.cat_frame_idx = 0
         self.cat_anim_accum = 0.0
         self.cat_fps = 1.0  
@@ -579,9 +585,9 @@ class MissionControlView(arcade.View):
             font_name=FONT_NAME, font_size=10, text_color=arcade.color.LIGHT_GREEN
         )
 
-        # Launch button with normal + pressed icons
-        normal_tex = arcade.load_texture("assets/ui/Icon1.png")
-        pressed_tex = arcade.load_texture("assets/ui/IconPressed1.png")
+        # Launch button
+        normal_tex = arcade.load_texture(asset("assets/ui/Icon1.png"))
+        pressed_tex = arcade.load_texture(asset("assets/ui/IconPressed1.png"))
         self.launch_button = arcade.gui.UITextureButton(
             x=520, y=150, width=30, height=27,
             texture=normal_tex, texture_pressed=pressed_tex
@@ -599,7 +605,7 @@ class MissionControlView(arcade.View):
         self.ui.add(arcade.gui.UIAnchorWidget(anchor_x="left", anchor_y="bottom",
                                               align_x=450, align_y=260, child=self.launch_button))
 
-        # Labels drawn
+        # Labels
         self.labels = [
             arcade.Text("SPEED", 281, 340 + 30, arcade.color.LIGHT_GREEN, 10, font_name=FONT_NAME),
             arcade.Text("MASS", 390, 340 + 30, arcade.color.LIGHT_GREEN, 10, font_name=FONT_NAME),
