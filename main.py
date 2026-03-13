@@ -3,10 +3,16 @@ import random
 import arcade
 import arcade.gui
 import os
+import sys
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def asset(path: str):
+    if getattr(sys, "forzen", False):
+        BASE_DIR = sys._MEIPASS
+    else:
+        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    
     return os.path.join(BASE_DIR, path)
 
 # ---------- Constants ----------

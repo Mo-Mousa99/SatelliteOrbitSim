@@ -1,5 +1,0 @@
-{
-  "python.pythonPath": "venv/Scripts/python.exe",  // On Windows
-  "python.linting.enabled": true,
-  "python.linting.pylintEnabled": true
-}
